@@ -19,8 +19,6 @@ namespace LicenseManagerAPI.Controllers
             _context = context;
         }
 
-        // GET: api/compliance/report
-        // returns the calculated compliance status for the dashboard
         [HttpGet("report")]
         public async Task<ActionResult<IEnumerable<ComplianceReportDTO>>> GetComplianceReport()
         {
@@ -28,8 +26,6 @@ namespace LicenseManagerAPI.Controllers
             return Ok(report);
         }
 
-        // GET: api/compliance/alerts
-        // Returns the audit log of alerts
         [HttpGet("alerts")]
         public async Task<ActionResult<IEnumerable<ComplianceEvent>>> GetAlerts()
         {
@@ -39,20 +35,32 @@ namespace LicenseManagerAPI.Controllers
                 .ToListAsync();
         }
 
-        // GET: api/compliance/renewals
         [HttpGet("renewals")]
         public async Task<ActionResult<IEnumerable<RenewalTask>>> GetRenewals()
         {
             return await _context.RenewalTasks.ToListAsync();
         }
 
-        // POST: api/compliance/renewals
         [HttpPost("renewals")]
         public async Task<ActionResult<RenewalTask>> CreateRenewal(RenewalTask task)
         {
-            _context.RenewalTasks.Add(task);
-            await _context.SaveChangesAsync();
-            return CreatedAtAction(nameof(GetRenewals), new { id = task.TaskId }, task);
+            try
+            {
+                // Validate License Exists
+                if (!await _context.SoftwareLicenses.AnyAsync(l => l.LicenseId == task.LicenseId))
+                {
+                    return BadRequest($"License ID {task.LicenseId} does not exist.");
+                }
+
+                _context.RenewalTasks.Add(task);
+                await _context.SaveChangesAsync();
+                return CreatedAtAction(nameof(GetRenewals), new { id = task.TaskId }, task);
+            }
+            catch (Exception ex)
+            {
+                // This will return the ACTUAL error details to your browser console
+                return StatusCode(500, new { message = "Server Error", error = ex.Message, inner = ex.InnerException?.Message });
+            }
         }
     }
 }

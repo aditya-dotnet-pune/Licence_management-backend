@@ -17,7 +17,7 @@ namespace LicenseManagerAPI.Services
         {
             var report = new List<ComplianceReportDTO>();
 
-            // 1. Fetch all licenses and installations
+            // 1. Fetch Data
             var licenses = await _context.SoftwareLicenses.ToListAsync();
             var devices = await _context.Devices.Include(d => d.Installations).ToListAsync();
 
@@ -25,39 +25,59 @@ namespace LicenseManagerAPI.Services
             {
                 int usedCount = 0;
 
-                // 2. Logic: Entitlement Matching
-                if (license.LicenseType == "Per-Device" || license.LicenseType == "Concurrent")
+                // --- ENTITLEMENT MATCHING LOGIC ---
+                if (license.LicenseType.Equals("Per-Device", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Count total installations across all devices
-                    usedCount = devices.SelectMany(d => d.Installations)
-                                       .Count(i => i.ProductName.Equals(license.ProductName, StringComparison.OrdinalIgnoreCase));
+                    usedCount = devices.Count(d => d.Installations.Any(i => IsMatch(i.ProductName, license.ProductName)));
                 }
-                else if (license.LicenseType == "Per-User")
+                else if (license.LicenseType.Equals("Per-User", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Count distinct users who have this software installed on ANY of their devices
-                    // (Note: Requires Device to have an OwnerUserId)
-                    var userInstallations = devices
+                    var uniqueUsers = devices
                         .Where(d => !string.IsNullOrEmpty(d.OwnerUserId) &&
-                                    d.Installations.Any(i => i.ProductName.Equals(license.ProductName, StringComparison.OrdinalIgnoreCase)))
+                                    d.Installations.Any(i => IsMatch(i.ProductName, license.ProductName)))
                         .Select(d => d.OwnerUserId)
                         .Distinct()
-                        .Count();
-
-                    usedCount = userInstallations;
+                        .ToList();
+                    usedCount = uniqueUsers.Count;
                 }
-                else // Subscription
+                else // Concurrent / Subscription / Default
                 {
-                    // Simple count of installs for now
-                    usedCount = devices.SelectMany(d => d.Installations)
-                                      .Count(i => i.ProductName.Equals(license.ProductName, StringComparison.OrdinalIgnoreCase));
+                    usedCount = devices
+                        .SelectMany(d => d.Installations)
+                        .Count(i => IsMatch(i.ProductName, license.ProductName));
                 }
 
-                // 3. Logic: Compliance Scoring
+                // --- COMPLIANCE SCORING (Updated) ---
+
                 var gap = license.TotalEntitlements - usedCount;
                 string status = "Compliant";
 
-                if (gap < 0) status = "Over-Licensed"; // CRITICAL: Using more than owned
-                else if (gap > 5) status = "Under-Utilized"; // Warning: Wasting money
+                // Logic for: compliant, under-licensed, over-licensed, unused
+
+                if (gap < 0)
+                {
+                    // Usage > Entitlements = Illegal/Risk
+                    status = "Under-licensed";
+
+                    // Trigger Alert Logic
+                    await LogComplianceEvent(license.LicenseId, "Under-Licensed", "High",
+                        $"Compliance Violation: {license.ProductName} is used by {usedCount} entities but only {license.TotalEntitlements} licenses are owned.");
+                }
+                else if (usedCount == 0 && license.TotalEntitlements > 0)
+                {
+                    // No usage at all
+                    status = "Unused";
+                }
+                else if (gap > 0)
+                {
+                    // Entitlements > Usage (but usage > 0) = Waste
+                    status = "Over-licensed";
+                }
+                else
+                {
+                    // Gap == 0
+                    status = "Compliant";
+                }
 
                 report.Add(new ComplianceReportDTO
                 {
@@ -68,25 +88,23 @@ namespace LicenseManagerAPI.Services
                     Status = status,
                     Gap = gap
                 });
-
-                // 4. Auto-Generate Alerts (Side effect logic)
-                if (status == "Over-Licensed")
-                {
-                    await LogComplianceEvent(license.LicenseId, "OverUsage", "High",
-                        $"Detected {usedCount} installs but only {license.TotalEntitlements} licenses owned.");
-                }
             }
 
             return report;
         }
 
+        private bool IsMatch(string installedName, string licenseName)
+        {
+            if (string.IsNullOrEmpty(installedName) || string.IsNullOrEmpty(licenseName)) return false;
+            return installedName.Trim().Equals(licenseName.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+
         private async Task LogComplianceEvent(int licenseId, string type, string severity, string details)
         {
-            // Avoid duplicate alerts for the same day
             bool exists = await _context.ComplianceEvents.AnyAsync(e =>
                 e.LicenseId == licenseId &&
                 e.EventType == type &&
-                e.DetectedAt > DateTime.Now.AddDays(-1));
+                e.DetectedAt > DateTime.Today);
 
             if (!exists)
             {
