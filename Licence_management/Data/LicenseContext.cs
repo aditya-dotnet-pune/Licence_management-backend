@@ -10,5 +10,7 @@ namespace LicenseManagerAPI.Data
         public DbSet<SoftwareLicense> SoftwareLicenses { get; set; }
         public DbSet<Device> Devices { get; set; }
         public DbSet<InstalledSoftware> InstalledSoftware { get; set; }
+        public DbSet<ComplianceEvent> ComplianceEvents { get; set; }
+        public DbSet<RenewalTask> RenewalTasks { get; set; }
     }
 }

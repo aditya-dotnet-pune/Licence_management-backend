@@ -22,7 +22,7 @@ builder.Services.AddCors(options =>
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-
+builder.Services.AddScoped<LicenseManagerAPI.Services.ComplianceEngine>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
