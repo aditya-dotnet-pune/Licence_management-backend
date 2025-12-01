@@ -10,3 +10,4 @@
         public int Gap { get; set; } // Positive = Available, Negative = Shortage
     }
 }
+
